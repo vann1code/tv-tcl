@@ -84,6 +84,7 @@ public class HomeActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        Ativador.garantir(this);
         primeiro.requestFocus();
         cenario.setAnimando(true);
         relogio.setAnimando(true);
