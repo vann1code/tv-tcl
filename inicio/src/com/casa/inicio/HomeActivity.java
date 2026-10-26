@@ -138,7 +138,7 @@ public class HomeActivity extends Activity {
     }
 
     /** Cartão da fileira; com {@code inputPrevia}, o foco nele mostra a entrada ao vivo na janelinha. */
-    private View cartao(LinearLayout linha, final String nome, int tipoIcone, final int cor, final Intent intent,
+    private View cartao(LinearLayout linha, final String nome, final int tipoIcone, final int cor, final Intent intent,
                         final String inputPrevia, final Uri canalPrevia) {
         final LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
@@ -185,7 +185,7 @@ public class HomeActivity extends Activity {
                 v.animate().scaleX(escala).scaleY(escala).setDuration(120).start();
                 if (temFoco) {
                     if (inputPrevia != null) {
-                        previa.mostrar(inputPrevia, canalPrevia, cor, nome);
+                        previa.mostrar(inputPrevia, canalPrevia, cor, nome, tipoIcone);
                     } else {
                         previa.esconder();
                     }
