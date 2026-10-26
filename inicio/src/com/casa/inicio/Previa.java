@@ -2,72 +2,81 @@ package com.casa.inicio;
 
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
+import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PixelFormat;
 import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.media.tv.TvInputManager;
 import android.media.tv.TvView;
 import android.net.Uri;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 /**
  * Janelinha com a entrada ao vivo (sem som) do cartão em foco.
  *
- * O vídeo da TV é uma camada de hardware que não aceita cantos arredondados; por isso a moldura é
- * desenhada por cima dele, com o recorte interno arredondado, escondendo os cantos retos do vídeo.
- * A TV só decodifica um vídeo por vez, então a janelinha é liberada antes de abrir algo em tela cheia.
+ * O compositor da Realtek só aceita janelas com uma região visível retangular: um TvView dentro da
+ * janela da tela inicial abre um "furo" nela e o compositor descarta quase toda a tela. Por isso o
+ * vídeo fica numa janela própria do tamanho exato dele, e a moldura (que cobre os cantos retos do
+ * vídeo) e a legenda ficam numa terceira janela por cima. Nenhuma janela tem furo.
+ *
+ * A TV só decodifica um vídeo por vez, então a prévia é liberada antes de abrir algo em tela cheia.
  */
-class Previa extends LinearLayout {
+class Previa {
     private static final long ESPERA_MS = 400; // só sintoniza quando o seletor para no cartão
     private static final int LARGURA = 240, ALTURA = 135; // dp, 16:9
-    private static final int BRILHO = 10, BORDA = 5, RAIO = 15; // dp
+    private static final int BRILHO = 10, BORDA = 5, RAIO = 15, LEGENDA = 30; // dp
+    private static final int TOPO = 26, DIREITA = 36; // dp, posição da moldura na tela
+
+    // Paleta do pôr do sol de Leonida
+    private static final int ROSA = Color.rgb(255, 46, 136);
+    private static final int LARANJA = Color.rgb(255, 138, 61);
+    private static final int AMARELO = Color.rgb(255, 205, 96);
 
     private enum Estado { SINTONIZANDO, AO_VIVO, SEM_SINAL }
 
+    private final Activity activity;
+    private final WindowManager wm;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final float dp;
-    private final TvView tv;
-    private final Espera espera;
-    private final Moldura moldura;
-    private final TextView nomeView;
-    private final TextView selo;
-    private final GradientDrawable fundoSelo = new GradientDrawable();
 
-    private int cor = Color.WHITE;
+    private final TvView tv;
+    private final FrameLayout camadaVideo;   // janela só com o vídeo
+    private final FrameLayout camadaMoldura; // janela com moldura, tela de espera e legenda
+    private final Moldura moldura;
+    private final Espera espera;
+    private final Legenda legenda;
+    private boolean anexada;
+
+    private int cor = ROSA;
     private ValueAnimator trocaCor;
     private String nome = "";
+    private Estado estado = Estado.SINTONIZANDO;
     private String sintonizado;   // inputId em uso no TvView, ou null
     private Runnable pendente;
+    private boolean visivel;
 
-    Previa(Context c) {
-        super(c);
-        dp = c.getResources().getDisplayMetrics().density;
-        setOrientation(VERTICAL);
-        setClipChildren(false);
-        setAlpha(0f);
-        setVisibility(INVISIBLE);
+    Previa(Activity a) {
+        activity = a;
+        wm = a.getWindowManager();
+        dp = a.getResources().getDisplayMetrics().density;
 
-        int brilho = px(BRILHO), borda = px(BORDA);
-        FrameLayout quadro = new FrameLayout(c);
-        quadro.setClipChildren(false);
-
-        tv = new TvView(c);
+        tv = new TvView(a);
         tv.setStreamVolume(0f);
         tv.setCallback(new TvView.TvInputCallback() {
             @Override
@@ -93,53 +102,80 @@ class Previa extends LinearLayout {
                 mudarEstado(Estado.SEM_SINAL);
             }
         });
-        FrameLayout.LayoutParams lpVideo = new FrameLayout.LayoutParams(px(LARGURA), px(ALTURA));
-        lpVideo.leftMargin = lpVideo.topMargin = brilho + borda;
-        quadro.addView(tv, lpVideo);
+        camadaVideo = new FrameLayout(a);
+        camadaVideo.addView(tv, new FrameLayout.LayoutParams(-1, -1));
+        camadaVideo.setVisibility(View.INVISIBLE);
 
-        espera = new Espera(c);
-        quadro.addView(espera, new FrameLayout.LayoutParams(lpVideo));
+        int margem = px(BRILHO + BORDA);
+        camadaMoldura = new FrameLayout(a);
+        camadaMoldura.setClipChildren(false);
+        camadaMoldura.setAlpha(0f);
+        camadaMoldura.setVisibility(View.INVISIBLE);
+        espera = new Espera(a);
+        FrameLayout.LayoutParams lpEspera = new FrameLayout.LayoutParams(px(LARGURA), px(ALTURA));
+        lpEspera.leftMargin = lpEspera.topMargin = margem;
+        camadaMoldura.addView(espera, lpEspera);
+        moldura = new Moldura(a);
+        camadaMoldura.addView(moldura, new FrameLayout.LayoutParams(-1, px(ALTURA) + 2 * margem));
+        legenda = new Legenda(a);
+        FrameLayout.LayoutParams lpLegenda = new FrameLayout.LayoutParams(px(LARGURA), px(LEGENDA));
+        lpLegenda.leftMargin = margem;
+        lpLegenda.topMargin = px(ALTURA) + 2 * margem - px(4);
+        camadaMoldura.addView(legenda, lpLegenda);
+    }
 
-        moldura = new Moldura(c);
-        quadro.addView(moldura, new FrameLayout.LayoutParams(
-                px(LARGURA) + 2 * (brilho + borda), px(ALTURA) + 2 * (brilho + borda)));
-        addView(quadro);
+    /** Cria as duas janelas por cima da tela inicial; precisa da janela da activity já anexada. */
+    void anexar() {
+        IBinder token = activity.getWindow().getDecorView().getWindowToken();
+        if (anexada || token == null) {
+            return;
+        }
+        int margem = px(BRILHO + BORDA);
+        wm.addView(camadaVideo, janela(WindowManager.LayoutParams.TYPE_APPLICATION_PANEL, token,
+                px(LARGURA), px(ALTURA), px(DIREITA) + margem - px(BRILHO), px(TOPO) + margem - px(BRILHO)));
+        wm.addView(camadaMoldura, janela(WindowManager.LayoutParams.TYPE_APPLICATION_SUB_PANEL, token,
+                px(LARGURA) + 2 * margem, px(ALTURA) + 2 * margem + px(LEGENDA), px(DIREITA) - px(BRILHO), px(TOPO) - px(BRILHO)));
+        anexada = true;
+    }
 
-        // Legenda: nome à esquerda, selo de estado à direita, alinhados à moldura
-        LinearLayout legenda = new LinearLayout(c);
-        legenda.setOrientation(HORIZONTAL);
-        legenda.setGravity(Gravity.CENTER_VERTICAL);
-        nomeView = new TextView(c);
-        nomeView.setTextColor(Color.WHITE);
-        nomeView.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-        nomeView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        nomeView.setLetterSpacing(.18f);
-        legenda.addView(nomeView, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
-        selo = new TextView(c);
-        selo.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
-        selo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        selo.setLetterSpacing(.14f);
-        selo.setPadding(px(9), px(3), px(9), px(3));
-        fundoSelo.setCornerRadius(px(20));
-        selo.setBackground(fundoSelo);
-        legenda.addView(selo);
-        LayoutParams lpLegenda = new LayoutParams(px(LARGURA), LayoutParams.WRAP_CONTENT);
-        lpLegenda.leftMargin = brilho + borda;
-        lpLegenda.topMargin = -px(2);
-        addView(legenda, lpLegenda);
+    void remover() {
+        esconder();
+        if (anexada) {
+            wm.removeViewImmediate(camadaMoldura);
+            wm.removeViewImmediate(camadaVideo);
+            anexada = false;
+        }
+    }
+
+    private WindowManager.LayoutParams janela(int tipo, IBinder token, int w, int h, int x, int y) {
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(w, h, tipo,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.token = token;
+        lp.gravity = Gravity.TOP | Gravity.END;
+        lp.x = x;
+        lp.y = y;
+        lp.windowAnimations = 0;
+        return lp;
     }
 
     /** Mostra a moldura já em espera e sintoniza a entrada depois de uma pausa curta no cartão. */
     void mostrar(final String inputId, final Uri canal, int novaCor, String novoNome, int icone) {
+        if (!anexada) {
+            return;
+        }
         cancelarPendente();
         nome = novoNome;
-        nomeView.setText(novoNome.toUpperCase());
+        legenda.invalidate();
         espera.setIcone(icone);
         animarCor(novaCor);
-        if (getVisibility() != VISIBLE) {
-            setVisibility(VISIBLE);
-            setTranslationY(px(8));
-            animate().alpha(1f).translationY(0).setDuration(220).start();
+        if (!visivel) {
+            visivel = true;
+            camadaMoldura.setVisibility(View.VISIBLE);
+            camadaMoldura.setTranslationY(px(8));
+            camadaMoldura.animate().alpha(1f).translationY(0).setDuration(220).start();
         }
         if (inputId.equals(sintonizado)) {
             return;
@@ -151,6 +187,7 @@ class Previa extends LinearLayout {
             public void run() {
                 pendente = null;
                 sintonizado = inputId;
+                camadaVideo.setVisibility(View.VISIBLE);
                 tv.tune(inputId, canal);
             }
         };
@@ -162,17 +199,21 @@ class Previa extends LinearLayout {
         cancelarPendente();
         liberarTv();
         espera.setAtiva(false);
-        if (getVisibility() == VISIBLE) {
-            animate().alpha(0f).translationY(px(8)).setDuration(160).withEndAction(new Runnable() {
+        if (visivel) {
+            visivel = false;
+            camadaMoldura.animate().alpha(0f).translationY(px(8)).setDuration(160).withEndAction(new Runnable() {
                 @Override
                 public void run() {
-                    setVisibility(INVISIBLE);
+                    if (!visivel) {
+                        camadaMoldura.setVisibility(View.INVISIBLE);
+                    }
                 }
             }).start();
         }
     }
 
     private void mudarEstado(Estado e) {
+        estado = e;
         if (e == Estado.AO_VIVO) {
             espera.animate().alpha(0f).setDuration(300).withEndAction(new Runnable() {
                 @Override
@@ -183,32 +224,16 @@ class Previa extends LinearLayout {
         } else {
             espera.animate().cancel();
             espera.setAlpha(1f);
-            espera.setSemSinal(e == Estado.SEM_SINAL, nome);
             espera.setAtiva(true);
         }
-        switch (e) {
-            case AO_VIVO:
-                selo.setText("●  AO VIVO");
-                selo.setTextColor(Color.WHITE);
-                fundoSelo.setColor(Color.argb(200, 230, 40, 70));
-                break;
-            case SINTONIZANDO:
-                selo.setText("SINTONIZANDO");
-                selo.setTextColor(Color.argb(220, 255, 255, 255));
-                fundoSelo.setColor(Color.argb(60, 255, 255, 255));
-                break;
-            default:
-                selo.setText("SEM SINAL");
-                selo.setTextColor(Color.argb(170, 255, 255, 255));
-                fundoSelo.setColor(Color.argb(40, 255, 255, 255));
-        }
+        legenda.invalidate();
     }
 
     private void animarCor(int alvo) {
         if (trocaCor != null) {
             trocaCor.cancel();
         }
-        if (getVisibility() != VISIBLE) {
+        if (!visivel) {
             aplicarCor(alvo);
             return;
         }
@@ -227,6 +252,7 @@ class Previa extends LinearLayout {
         cor = c;
         moldura.invalidate();
         espera.invalidate();
+        legenda.invalidate();
     }
 
     private void liberarTv() {
@@ -234,6 +260,7 @@ class Previa extends LinearLayout {
             tv.reset();
             sintonizado = null;
         }
+        camadaVideo.setVisibility(View.INVISIBLE);
     }
 
     private void cancelarPendente() {
@@ -253,12 +280,13 @@ class Previa extends LinearLayout {
 
     /**
      * Moldura por cima do vídeo: vidro escuro com recorte arredondado (cobre os cantos retos do vídeo),
-     * fio neon na borda interna e um brilho suave em volta.
+     * fio com o degradê do pôr do sol e um brilho suave na cor do cartão.
      */
     private class Moldura extends View {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path vidro = new Path();
         private final RectF fora = new RectF(), dentro = new RectF();
+        private Shader fioShader, vidroShader;
 
         Moldura(Context c) {
             super(c);
@@ -273,41 +301,111 @@ class Previa extends LinearLayout {
             vidro.setFillType(Path.FillType.EVEN_ODD);
             vidro.addRoundRect(fora, px(RAIO), px(RAIO), Path.Direction.CW);
             vidro.addRoundRect(dentro, px(RAIO - BORDA + 2), px(RAIO - BORDA + 2), Path.Direction.CW);
+            vidroShader = new LinearGradient(0, fora.top, 0, fora.bottom,
+                    new int[] {Color.rgb(46, 22, 58), Color.rgb(20, 8, 30), Color.rgb(12, 4, 20)},
+                    new float[] {0f, .35f, 1f}, Shader.TileMode.CLAMP);
+            fioShader = new LinearGradient(fora.left, fora.top, fora.right, fora.bottom,
+                    new int[] {AMARELO, LARANJA, ROSA}, null, Shader.TileMode.CLAMP);
         }
 
         @Override
         protected void onDraw(Canvas c) {
             float raio = px(RAIO);
-            // Brilho: alguns contornos largos e bem transparentes, sem desfoque caro
+            // Brilho na cor do cartão: contornos largos e bem transparentes, sem desfoque caro
             p.setStyle(Paint.Style.STROKE);
             p.setShader(null);
             for (int i = 4; i >= 1; i--) {
                 p.setStrokeWidth(px(BRILHO) * i / 2.5f);
-                p.setColor(comAlfa(cor, 10 + (4 - i) * 6));
+                p.setColor(comAlfa(cor, 10 + (4 - i) * 7));
                 c.drawRoundRect(fora, raio, raio, p);
             }
-            // Vidro escuro da moldura, com um reflexo no alto
+            // Vidro escuro da moldura
             p.setStyle(Paint.Style.FILL);
-            p.setShader(new LinearGradient(0, fora.top, 0, fora.bottom,
-                    new int[] {Color.rgb(40, 26, 54), Color.rgb(16, 8, 26), Color.rgb(10, 4, 18)},
-                    new float[] {0f, .35f, 1f}, Shader.TileMode.CLAMP));
+            p.setShader(vidroShader);
             c.drawPath(vidro, p);
-            p.setShader(null);
-            // Fio neon na borda interna e contorno fino por fora
+            // Fio do pôr do sol na borda interna e contorno fino na cor do cartão por fora
             p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(px(1) * 1.5f);
-            p.setColor(comAlfa(cor, 230));
+            p.setShader(fioShader);
+            p.setStrokeWidth(px(2));
             float ri = px(RAIO - BORDA + 2);
             c.drawRoundRect(dentro, ri, ri, p);
+            p.setShader(null);
             p.setStrokeWidth(px(1));
-            p.setColor(comAlfa(cor, 90));
+            p.setColor(comAlfa(cor, 120));
             c.drawRoundRect(fora, raio, raio, p);
         }
     }
 
+    /** Nome do aparelho em letras grossas e inclinadas com o degradê do pôr do sol, e o selo de estado. */
+    private class Legenda extends View {
+        private final Paint nomePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint seloPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fundoSelo = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF pilula = new RectF();
+        private final long inicio = SystemClock.uptimeMillis();
+
+        Legenda(Context c) {
+            super(c);
+            nomePaint.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD_ITALIC));
+            nomePaint.setTextSize(sp(17));
+            nomePaint.setLetterSpacing(.04f);
+            seloPaint.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
+            seloPaint.setTextSize(sp(10));
+            seloPaint.setLetterSpacing(.14f);
+            seloPaint.setTextAlign(Paint.Align.CENTER);
+        }
+
+        private float sp(int v) {
+            return TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, v, getResources().getDisplayMetrics());
+        }
+
+        @Override
+        protected void onDraw(Canvas c) {
+            float h = getHeight(), base = h * .72f;
+            String titulo = nome.toUpperCase();
+            nomePaint.setShader(new LinearGradient(0, base - nomePaint.getTextSize(), 0, base,
+                    new int[] {AMARELO, LARANJA, ROSA}, null, Shader.TileMode.CLAMP));
+            nomePaint.setShadowLayer(px(6), 0, 0, comAlfa(ROSA, 150));
+            c.drawText(titulo, px(2), base, nomePaint);
+
+            String texto;
+            int fundo, frente;
+            boolean pisca = false;
+            switch (estado) {
+                case AO_VIVO:
+                    texto = "●  AO VIVO";
+                    fundo = ROSA;
+                    frente = Color.WHITE;
+                    pisca = true;
+                    break;
+                case SINTONIZANDO:
+                    texto = "SINTONIZANDO";
+                    fundo = Color.argb(70, 255, 255, 255);
+                    frente = Color.argb(230, 255, 255, 255);
+                    break;
+                default:
+                    texto = "SEM SINAL";
+                    fundo = Color.argb(45, 255, 255, 255);
+                    frente = Color.argb(170, 255, 255, 255);
+            }
+            float lp = seloPaint.measureText(texto) + px(18), ap = px(18);
+            pilula.set(getWidth() - lp, base - ap * .78f, getWidth(), base - ap * .78f + ap);
+            fundoSelo.setColor(fundo);
+            c.drawRoundRect(pilula, ap / 2, ap / 2, fundoSelo);
+            seloPaint.setColor(frente);
+            if (pisca) {
+                // o "●" pulsa de leve, como gravação
+                float t = (SystemClock.uptimeMillis() - inicio) / 1000f;
+                seloPaint.setAlpha((int) (200 + 55 * Math.sin(t * 4)));
+                postInvalidateDelayed(80);
+            }
+            c.drawText(texto, pilula.centerX(), pilula.centerY() + seloPaint.getTextSize() * .35f, seloPaint);
+        }
+    }
+
     /**
-     * Tela calma enquanto o vídeo não chega: degradê escuro na cor do cartão, o ícone "respirando",
-     * um texto discreto e linhas de varredura bem leves.
+     * Tela calma enquanto o vídeo não chega: céu de pôr do sol escurecido, o ícone "respirando" com
+     * halo na cor do cartão, texto discreto e linhas de varredura bem leves.
      */
     private class Espera extends View {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -315,16 +413,15 @@ class Previa extends LinearLayout {
         private final Paint linhas = new Paint();
         private final long inicio = SystemClock.uptimeMillis();
         private Icone icone;
-        private boolean ativa, semSinal;
-        private String nomeAparelho = "";
+        private boolean ativa;
         // Degradês prontos: só são refeitos quando a cor ou o tamanho mudam
-        private Shader fundo, halo, faixa;
+        private Shader ceu, halo, faixa;
         private int corDosShaders;
-        private float wDosShaders, hDosShaders;
+        private float hDosShaders;
 
         Espera(Context c) {
             super(c);
-            texto.setTypeface(Typeface.create("sans-serif-condensed", Typeface.NORMAL));
+            texto.setTypeface(Typeface.create("sans-serif-condensed", Typeface.BOLD));
             texto.setTextAlign(Paint.Align.CENTER);
             texto.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 11, getResources().getDisplayMetrics()));
             texto.setLetterSpacing(.25f);
@@ -333,12 +430,6 @@ class Previa extends LinearLayout {
 
         void setIcone(int tipo) {
             icone = new Icone(tipo, Color.WHITE, dp);
-            invalidate();
-        }
-
-        void setSemSinal(boolean sim, String nome) {
-            semSinal = sim;
-            nomeAparelho = nome;
             invalidate();
         }
 
@@ -353,53 +444,50 @@ class Previa extends LinearLayout {
         protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight();
             float t = (SystemClock.uptimeMillis() - inicio) / 1000f;
+            boolean semSinal = estado == Estado.SEM_SINAL;
             float respiro = semSinal ? .5f : .5f + .5f * (float) Math.sin(t * 2.2f);
-
             float cx = w / 2, cy = h * .42f;
-            if (fundo == null || corDosShaders != cor || wDosShaders != w || hDosShaders != h) {
+
+            if (ceu == null || corDosShaders != cor || hDosShaders != h) {
                 corDosShaders = cor;
-                wDosShaders = w;
                 hDosShaders = h;
-                fundo = new LinearGradient(0, 0, 0, h,
-                        Color.rgb(Color.red(cor) / 7 + 8, Color.green(cor) / 9 + 4, Color.blue(cor) / 6 + 14),
-                        Color.rgb(8, 3, 14), Shader.TileMode.CLAMP);
+                ceu = new LinearGradient(0, 0, 0, h,
+                        new int[] {Color.rgb(16, 6, 30), Color.rgb(46, 12, 52), Color.rgb(84, 26, 60)},
+                        new float[] {0f, .6f, 1f}, Shader.TileMode.CLAMP);
                 halo = new RadialGradient(cx, cy, h * .55f, comAlfa(cor, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP);
                 faixa = new LinearGradient(0, 0, 0, h * .3f,
-                        Color.TRANSPARENT, Color.argb(18, 255, 255, 255), Shader.TileMode.MIRROR);
+                        Color.TRANSPARENT, Color.argb(16, 255, 255, 255), Shader.TileMode.MIRROR);
             }
 
-            // Fundo: degradê escuro tingido na cor do cartão
+            // Céu escurecido de pôr do sol
             p.setStyle(Paint.Style.FILL);
-            p.setShader(fundo);
+            p.setShader(ceu);
             c.drawRect(0, 0, w, h, p);
             // Halo atrás do ícone, pulsando pela opacidade
             p.setShader(halo);
-            p.setAlpha(semSinal ? 28 : (int) (40 + 50 * respiro));
+            p.setAlpha(semSinal ? 30 : (int) (45 + 55 * respiro));
             c.drawRect(0, 0, w, h, p);
             p.setAlpha(255);
             p.setShader(null);
 
-            // Ícone do aparelho
             if (icone != null) {
                 float lado = h * .3f * (semSinal ? 1f : .96f + .04f * respiro);
-                icone.setCor(comAlfa(cor, semSinal ? 110 : 200));
+                icone.setCor(semSinal ? Color.argb(110, 255, 255, 255) : comAlfa(cor, 230));
                 icone.setBounds((int) (cx - lado / 2), (int) (cy - lado / 2), (int) (cx + lado / 2), (int) (cy + lado / 2));
                 icone.draw(c);
             }
 
-            // Texto
             String msg;
             if (semSinal) {
-                msg = nomeAparelho.equalsIgnoreCase("TV aberta") ? "SEM SINAL" : nomeAparelho.toUpperCase() + " DESLIGADO";
+                msg = nome.equalsIgnoreCase("TV aberta") ? "SEM SINAL" : nome.toUpperCase() + " DESLIGADO";
                 texto.setColor(Color.argb(150, 255, 255, 255));
             } else {
                 int pontos = (int) (t * 2.5f) % 4;
                 msg = "SINTONIZANDO" + "...".substring(0, pontos) + "   ".substring(0, 3 - pontos);
-                texto.setColor(Color.argb(200, 255, 255, 255));
+                texto.setColor(Color.argb(210, 255, 255, 255));
             }
             c.drawText(msg, cx, h * .8f, texto);
 
-            // Linhas de varredura leves e uma faixa clara rolando devagar
             for (float y = 0; y < h; y += 3 * dp) {
                 c.drawRect(0, y, w, y + dp * .6f, linhas);
             }

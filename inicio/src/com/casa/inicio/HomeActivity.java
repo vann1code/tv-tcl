@@ -73,12 +73,8 @@ public class HomeActivity extends Activity {
         lpLinha.bottomMargin = dp(44);
         tela.addView(linha, lpLinha);
 
+        // A prévia vive em janelas próprias por cima desta (ver Previa); são criadas no onResume
         previa = new Previa(this);
-        FrameLayout.LayoutParams lpPrevia = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
-        lpPrevia.topMargin = dp(28);
-        lpPrevia.rightMargin = dp(40);
-        tela.addView(previa, lpPrevia);
 
         primeiro = cartao(linha, "TV aberta", Icone.TV, LARANJA, Botoes.tvAberta(),
                 Botoes.TV_ABERTA, TvContract.buildChannelUri(Botoes.CANAL_PREVIA));
@@ -99,10 +95,26 @@ public class HomeActivity extends Activity {
         super.onResume();
         Ativador.garantir(this);
         primeiro.requestFocus();
-        // requestFocus não chama o listener se o cartão já tinha o foco; a prévia precisa voltar mesmo assim
-        primeiro.getOnFocusChangeListener().onFocusChange(primeiro, true);
         cenario.setAnimando(true);
         relogio.setAnimando(true);
+        // As janelas da prévia precisam da janela desta activity já anexada, o que só vale depois do onResume
+        getWindow().getDecorView().post(new Runnable() {
+            @Override
+            public void run() {
+                previa.anexar();
+                // requestFocus não chama o listener se o cartão já tinha o foco; a prévia precisa voltar mesmo assim
+                View foco = getCurrentFocus();
+                if (foco != null && foco.getOnFocusChangeListener() != null) {
+                    foco.getOnFocusChangeListener().onFocusChange(foco, true);
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        previa.remover();
+        super.onDestroy();
     }
 
     @Override
