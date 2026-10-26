@@ -58,4 +58,8 @@ adb shell cmd package set-home-activity com.casa.inicio/.HomeActivity
 adb shell pm disable-user --user 0 com.google.android.tvlauncher
 adb shell settings put secure enabled_accessibility_services com.casa.inicio/com.casa.inicio.Botoes
 adb shell settings put secure accessibility_enabled 1
+adb shell pm grant com.casa.inicio android.permission.WRITE_SECURE_SETTINGS
 ```
+
+O firmware da TCL zera os serviços de acessibilidade a cada boot. Com a permissão acima, o `Ativador` religa o
+serviço dos botões no boot e sempre que a tela inicial abre.
