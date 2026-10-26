@@ -47,7 +47,8 @@ class Previa {
     private static final int PAINEL_L = 1920, PAINEL_A = 1080; // resolução do painel (VSCControlImpl GetPanelInfo)
     private static final long ESPERA_MS = 400; // só sintoniza quando o seletor para no cartão
     private static final int LARGURA = 240, ALTURA = 135; // dp, 16:9
-    private static final int BRILHO = 10, BORDA = 5, RAIO = 15, LEGENDA = 30; // dp
+    // RAIO 0: moldura reta por fora também, combinando com o vídeo retangular
+    private static final int BRILHO = 10, BORDA = 5, RAIO = 0, LEGENDA = 30; // dp
     private static final int TOPO = 26, DIREITA = 36; // dp, posição da moldura na tela
 
     // Paleta do pôr do sol de Leonida
