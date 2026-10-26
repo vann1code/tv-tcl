@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ponte: o botão Globoplay do controle TCL abre este componente fixo; ele troca a entrada para o HDMI2. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.globo.globotv"
+    android:versionCode="2"
+    android:versionName="2.0">
+
+    <application android:label="Ponte HDMI2" android:allowBackup="false">
+        <activity
+            android:name="br.com.globo.globotv.activity.SplashActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+    </application>
+</manifest>
