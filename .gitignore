@@ -1,0 +1,12 @@
+# Chave de assinatura: nunca publicar
+*.keystore
+*.jks
+
+# Ferramentas do Android SDK baixadas localmente e saídas de build
+sdk/
+build/
+*.apk
+
+# Dados locais: lista de pacotes da TV e print de conferência
+tv-pacotes-antes.txt
+tela.png
