@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="botoes_nome">Botões do controle</string>
+    <string name="botoes_descricao">Netflix abre o HDMI1, voz abre o YouTube e Input vai direto para a TV aberta.</string>
+</resources>
