@@ -21,6 +21,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -36,8 +37,14 @@ import android.widget.FrameLayout;
  * vídeo) e a legenda ficam numa terceira janela por cima. Nenhuma janela tem furo.
  *
  * A TV só decodifica um vídeo por vez, então a prévia é liberada antes de abrir algo em tela cheia.
+ *
+ * As sessões de vídeo da TCL ignoram o tamanho do TvView e mandam o vídeo sempre em tela cheia, atrás
+ * de tudo; a janelinha viraria só um recorte dele. Então a escala é pedida direto ao chip
+ * ({@code TTvPictureManager.scaleVideoWindow}, em coordenadas do painel) e desfeita ao soltar a prévia.
+ * O vídeo fica sempre retangular e por cima das janelas, por isso a borda interna da moldura é reta.
  */
 class Previa {
+    private static final int PAINEL_L = 1920, PAINEL_A = 1080; // resolução do painel (VSCControlImpl GetPanelInfo)
     private static final long ESPERA_MS = 400; // só sintoniza quando o seletor para no cartão
     private static final int LARGURA = 240, ALTURA = 135; // dp, 16:9
     private static final int BRILHO = 10, BORDA = 5, RAIO = 15, LEGENDA = 30; // dp
@@ -82,6 +89,7 @@ class Previa {
             @Override
             public void onVideoAvailable(String inputId) {
                 if (inputId.equals(sintonizado)) {
+                    escalarVideo(true);
                     mudarEstado(Estado.AO_VIVO);
                 }
             }
@@ -189,6 +197,7 @@ class Previa {
                 sintonizado = inputId;
                 camadaVideo.setVisibility(View.VISIBLE);
                 tv.tune(inputId, canal);
+                escalarVideo(true);
             }
         };
         handler.postDelayed(pendente, ESPERA_MS);
@@ -259,8 +268,57 @@ class Previa {
         if (sintonizado != null) {
             tv.reset();
             sintonizado = null;
+            escalarVideo(false);
         }
         camadaVideo.setVisibility(View.INVISIBLE);
+    }
+
+    /**
+     * Pede ao chip para colocar o vídeo no retângulo da janelinha ({@code naJanela}) ou de volta em
+     * tela cheia. A TCL pode refazer a janela ao trocar de canal/entrada, então o pedido se repete logo
+     * depois.
+     */
+    private void escalarVideo(final boolean naJanela) {
+        aplicarEscala(naJanela);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (naJanela == (sintonizado != null)) {
+                    aplicarEscala(naJanela);
+                }
+            }
+        }, 350);
+    }
+
+    private void aplicarEscala(boolean naJanela) {
+        int x = 0, y = 0, w = PAINEL_L, h = PAINEL_A;
+        if (naJanela) {
+            int[] pos = new int[2];
+            tv.getLocationOnScreen(pos);
+            float fx = PAINEL_L / (float) activity.getResources().getDisplayMetrics().widthPixels;
+            float fy = PAINEL_A / (float) activity.getResources().getDisplayMetrics().heightPixels;
+            x = Math.round(pos[0] * fx);
+            y = Math.round(pos[1] * fy);
+            w = Math.round(px(LARGURA) * fx);
+            h = Math.round(px(ALTURA) * fy);
+        }
+        try {
+            Class<?> cm = Class.forName("com.tcl.tvmanager.TTvPictureManager");
+            Object pm = cm.getMethod("getInstance", Context.class).invoke(null, activity);
+            Class<?> cj = Class.forName("com.tcl.tvmanager.vo.EnTCLWindow");
+            Class<?> cr = Class.forName("com.tcl.tvmanager.vo.VideoWindowRect");
+            Object rect = cr.newInstance();
+            cr.getField("x").setInt(rect, x);
+            cr.getField("y").setInt(rect, y);
+            cr.getField("width").setInt(rect, w);
+            cr.getField("height").setInt(rect, h);
+            @SuppressWarnings({"unchecked", "rawtypes"})
+            Object principal = Enum.valueOf((Class) cj, "EN_TCL_MAIN");
+            cm.getMethod("scaleVideoWindow", cj, cr).invoke(pm, principal, rect);
+            Log.d("CasaPrevia", "scaleVideoWindow " + x + "," + y + " " + w + "x" + h);
+        } catch (Throwable t) {
+            Log.w("CasaPrevia", "não consegui escalar o vídeo", t);
+        }
     }
 
     private void cancelarPendente() {
@@ -300,7 +358,7 @@ class Previa {
             vidro.reset();
             vidro.setFillType(Path.FillType.EVEN_ODD);
             vidro.addRoundRect(fora, px(RAIO), px(RAIO), Path.Direction.CW);
-            vidro.addRoundRect(dentro, px(RAIO - BORDA + 2), px(RAIO - BORDA + 2), Path.Direction.CW);
+            vidro.addRect(dentro, Path.Direction.CW); // reto: o vídeo é retangular e fica por cima
             vidroShader = new LinearGradient(0, fora.top, 0, fora.bottom,
                     new int[] {Color.rgb(46, 22, 58), Color.rgb(20, 8, 30), Color.rgb(12, 4, 20)},
                     new float[] {0f, .35f, 1f}, Shader.TileMode.CLAMP);
@@ -327,8 +385,7 @@ class Previa {
             p.setStyle(Paint.Style.STROKE);
             p.setShader(fioShader);
             p.setStrokeWidth(px(2));
-            float ri = px(RAIO - BORDA + 2);
-            c.drawRoundRect(dentro, ri, ri, p);
+            c.drawRect(dentro, p);
             p.setShader(null);
             p.setStrokeWidth(px(1));
             p.setColor(comAlfa(cor, 120));
