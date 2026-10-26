@@ -6,6 +6,7 @@
 sdk/
 build/
 *.apk
+*.idsig
 
 # Dados locais: lista de pacotes da TV e print de conferência
 tv-pacotes-antes.txt
