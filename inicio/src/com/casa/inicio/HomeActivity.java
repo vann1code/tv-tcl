@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.media.tv.TvContract;
+import android.net.Uri;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.TypedValue;
@@ -31,6 +33,7 @@ public class HomeActivity extends Activity {
     private View primeiro;
     private Cenario cenario;
     private RelogioVhs relogio;
+    private Previa previa;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,13 +73,23 @@ public class HomeActivity extends Activity {
         lpLinha.bottomMargin = dp(44);
         tela.addView(linha, lpLinha);
 
-        primeiro = cartao(linha, "TV aberta", Icone.TV, LARANJA, Botoes.tvAberta());
-        cartao(linha, "PS4", Icone.CONTROLE, VIOLETA, Botoes.entrada(Botoes.HDMI1));
-        cartao(linha, "Notebook", Icone.NOTEBOOK, CIANO, Botoes.entrada(Botoes.HDMI2));
+        previa = new Previa(this);
+        FrameLayout.LayoutParams lpPrevia = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        lpPrevia.topMargin = dp(28);
+        lpPrevia.rightMargin = dp(40);
+        tela.addView(previa, lpPrevia);
+
+        primeiro = cartao(linha, "TV aberta", Icone.TV, LARANJA, Botoes.tvAberta(),
+                Botoes.TV_ABERTA, TvContract.buildChannelUri(Botoes.CANAL_PREVIA));
+        cartao(linha, "PS4", Icone.CONTROLE, VIOLETA, Botoes.entrada(Botoes.HDMI1),
+                Botoes.HDMI1, TvContract.buildChannelUriForPassthroughInput(Botoes.HDMI1));
+        cartao(linha, "Notebook", Icone.NOTEBOOK, CIANO, Botoes.entrada(Botoes.HDMI2),
+                Botoes.HDMI2, TvContract.buildChannelUriForPassthroughInput(Botoes.HDMI2));
         cartao(linha, "YouTube", Icone.PLAY, ROSA,
-                getPackageManager().getLeanbackLaunchIntentForPackage("com.google.android.youtube.tv"));
+                getPackageManager().getLeanbackLaunchIntentForPackage("com.google.android.youtube.tv"), null, null);
         cartao(linha, "Ajustes", Icone.ENGRENAGEM, AMARELO,
-                new Intent(Settings.ACTION_SETTINGS).setPackage("com.android.tv.settings"));
+                new Intent(Settings.ACTION_SETTINGS).setPackage("com.android.tv.settings"), null, null);
 
         setContentView(tela);
     }
@@ -86,12 +99,15 @@ public class HomeActivity extends Activity {
         super.onResume();
         Ativador.garantir(this);
         primeiro.requestFocus();
+        // requestFocus não chama o listener se o cartão já tinha o foco; a prévia precisa voltar mesmo assim
+        primeiro.getOnFocusChangeListener().onFocusChange(primeiro, true);
         cenario.setAnimando(true);
         relogio.setAnimando(true);
     }
 
     @Override
     protected void onPause() {
+        previa.esconder();
         cenario.setAnimando(false);
         relogio.setAnimando(false);
         super.onPause();
@@ -121,7 +137,9 @@ public class HomeActivity extends Activity {
         return t;
     }
 
-    private View cartao(LinearLayout linha, String nome, int tipoIcone, final int cor, final Intent intent) {
+    /** Cartão da fileira; com {@code inputPrevia}, o foco nele mostra a entrada ao vivo na janelinha. */
+    private View cartao(LinearLayout linha, final String nome, int tipoIcone, final int cor, final Intent intent,
+                        final String inputPrevia, final Uri canalPrevia) {
         final LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setGravity(Gravity.CENTER);
@@ -165,11 +183,20 @@ public class HomeActivity extends Activity {
                 }
                 float escala = temFoco ? 1.14f : 1f;
                 v.animate().scaleX(escala).scaleY(escala).setDuration(120).start();
+                if (temFoco) {
+                    if (inputPrevia != null) {
+                        previa.mostrar(inputPrevia, canalPrevia, cor, nome);
+                    } else {
+                        previa.esconder();
+                    }
+                }
             }
         });
         c.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                // A TV só tem um caminho de vídeo: solta a prévia antes de abrir em tela cheia
+                previa.esconder();
                 abrir(intent);
             }
         });

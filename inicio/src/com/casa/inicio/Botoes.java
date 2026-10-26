@@ -33,6 +33,11 @@ public class Botoes extends AccessibilityService {
     static final String HDMI1 = "com.tcl.tvpassthrough/.TvPassThroughService/HW1413744128";
     static final String HDMI2 = "com.tcl.tvpassthrough/.TvPassThroughService/HW1413744384";
     static final String TV_ABERTA = "com.tcl.tvinput/.TDTVInputService/HW1413742848";
+    /**
+     * Canal mostrado na prévia da TV aberta (Globo HD). Fixo porque a lista de canais da TCL não é
+     * legível por apps comuns; muda se a TV for ressintonizada.
+     */
+    static final long CANAL_PREVIA = 11878;
 
     private static final String TCL_GERENTE = "com.tcl.keycustomfunctionservice.IKeyManagerlInterface";
     private static final String TCL_CALLBACK = "com.tcl.keycustomfunctionservice.KeyCallback";
